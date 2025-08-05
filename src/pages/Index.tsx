@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import Icon from '@/components/ui/icon';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 interface ArtIdea {
   id: string;
@@ -34,6 +35,8 @@ const ArtAssistant = () => {
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [showApiInput, setShowApiInput] = useState(true);
 
   const artIdeasDatabase: ArtIdea[] = [
     {
@@ -92,6 +95,60 @@ const ArtAssistant = () => {
     }
   ];
 
+  const generateArtIdeasWithAI = async (prompt: string): Promise<ArtIdea[]> => {
+    if (!apiKey) {
+      return generateArtIdeas(prompt);
+    }
+
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+      const aiPrompt = `
+Ты - эксперт по искусству и творчеству. На основе запроса пользователя "${prompt}" создай 3 уникальные художественные идеи.
+
+Для каждой идеи предоставь:
+1. Название (креативное и вдохновляющее)
+2. Подробное описание (2-3 предложения)
+3. Категорию искусства (Живопись, Фотография, Скульптура, Цифровое искусство, Каллиграфия, Рукоделие и т.д.)
+4. Уровень сложности (Easy, Medium, Hard)
+5. Список материалов (3-5 предметов)
+6. Источник вдохновения (художники, стили, движения)
+
+Ответь строго в формате JSON:
+{
+  "ideas": [
+    {
+      "title": "Название",
+      "description": "Описание",
+      "category": "Категория",
+      "difficulty": "Easy/Medium/Hard",
+      "materials": ["материал1", "материал2", "материал3"],
+      "inspiration": "Источник вдохновения"
+    }
+  ]
+}
+`;
+
+      const result = await model.generateContent(aiPrompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return parsed.ideas.map((idea: any, index: number) => ({
+          id: `ai_${Date.now()}_${index}`,
+          ...idea
+        }));
+      }
+    } catch (error) {
+      console.error('Error generating AI ideas:', error);
+    }
+
+    return generateArtIdeas(prompt);
+  };
+
   const generateArtIdeas = (prompt: string): ArtIdea[] => {
     const keywords = prompt.toLowerCase();
     let relevantIdeas = artIdeasDatabase;
@@ -125,23 +182,33 @@ const ArtAssistant = () => {
       timestamp: new Date(),
     };
 
+    const prompt = inputValue;
     setMessages(prev => [...prev, userMessage]);
     setInputValue('');
     setIsGenerating(true);
 
-    setTimeout(() => {
-      const ideas = generateArtIdeas(inputValue);
+    try {
+      const ideas = await generateArtIdeasWithAI(prompt);
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
-        content: `Отличная идея! Вот несколько концепций, которые могут вас вдохновить:`,
+        content: apiKey ? 'Вот уникальные концепции, созданные специально для вас с помощью Google Gemini AI:' : 'Отличная идея! Вот несколько концепций, которые могут вас вдохновить:',
         timestamp: new Date(),
         ideas: ideas,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      const errorMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        type: 'assistant',
+        content: 'Извините, произошла ошибка при генерации идей. Попробуйте еще раз.',
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
       setIsGenerating(false);
-    }, 1500);
+    }
   };
 
   const getDifficultyColor = (difficulty: string) => {
@@ -161,9 +228,53 @@ const ArtAssistant = () => {
           <h1 className="text-4xl md:text-6xl font-bold text-white mb-4">
             Персональный Арт-Ассистент
           </h1>
-          <p className="text-xl text-white/80 max-w-2xl mx-auto">
+          <p className="text-xl text-white/80 max-w-2xl mx-auto mb-6">
             Найдите вдохновение, создавайте уникальные произведения и развивайте свои творческие способности
           </p>
+          
+          {/* API Key Input */}
+          {showApiInput && (
+            <Card className="glass-effect border-white/20 max-w-md mx-auto mb-6">
+              <CardContent className="p-4">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Icon name="Key" size={16} className="text-white" />
+                  <span className="text-white text-sm font-medium">Google Gemini API Key (опционально)</span>
+                </div>
+                <div className="flex space-x-2">
+                  <Input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Введите API ключ для ИИ генерации"
+                    className="bg-white/10 border-white/20 text-white placeholder:text-white/60 focus:bg-white/20"
+                  />
+                  <Button
+                    onClick={() => setShowApiInput(false)}
+                    className="bg-white/20 hover:bg-white/30 text-white"
+                  >
+                    <Icon name="Check" size={16} />
+                  </Button>
+                </div>
+                <p className="text-white/60 text-xs mt-2">
+                  Без API будут использоваться заготовленные идеи. Получить ключ: <a href="https://ai.google.dev/" target="_blank" className="underline">ai.google.dev</a>
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          
+          {!showApiInput && apiKey && (
+            <div className="flex items-center justify-center space-x-2 mb-4">
+              <Icon name="Zap" size={16} className="text-yellow-400" />
+              <span className="text-white/80 text-sm">Работает на Google Gemini AI</span>
+              <Button
+                onClick={() => setShowApiInput(true)}
+                size="sm"
+                className="bg-white/10 hover:bg-white/20 text-white text-xs px-2 py-1 h-auto"
+              >
+                Изменить
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Main Chat Interface */}
